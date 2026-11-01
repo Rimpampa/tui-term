@@ -3,28 +3,28 @@ use std::{
     io::{self, BufWriter, Read, Write},
     path::PathBuf,
     sync::{
-        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
+        mpsc::{channel, Sender},
+        Arc, Mutex, RwLock,
     },
     time::Duration,
 };
 
 use bytes::Bytes;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use ratatui::{
-    DefaultTerminal,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Paragraph},
-};
-use tokio::{
-    sync::mpsc::{Sender, channel},
-    task::spawn_blocking,
+    DefaultTerminal,
 };
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
-use tui_term::widget::{Cursor, PseudoTerminal};
+use tui_term::{
+    terminal::TerminalResponder,
+    widget::{Cursor, PseudoTerminal},
+};
 
 #[derive(Debug, Clone, Copy)]
 struct Size {
@@ -46,7 +46,6 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
         rows: terminal.size()?.height,
         cols: terminal.size()?.width,
     };
-
     let cwd = std::env::current_dir().unwrap();
     let mut cmd = CommandBuilder::new_default_prog();
     cmd.cwd(cwd);
@@ -138,7 +137,7 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
                     }
                     _ => {
                         if let Some(index) = active_pane {
-                            if handle_pane_key_event(&mut panes[index], &key).await {
+                            if handle_pane_key_event(&mut panes[index], &key) {
                                 continue;
                             }
                         }
@@ -202,7 +201,7 @@ fn resize_all_panes(panes: &mut [PtyPane], size: Size) {
 }
 
 struct PtyPane {
-    parser: Arc<RwLock<vt100::Parser>>,
+    parser: Arc<RwLock<vt100::Parser<TerminalResponder>>>,
     sender: Sender<Bytes>,
     master_pty: Box<dyn MasterPty>,
     exited: Arc<AtomicBool>,
@@ -219,16 +218,18 @@ impl PtyPane {
                 pixel_height: 0,
             })
             .unwrap();
-        let parser = Arc::new(RwLock::new(vt100::Parser::new(
+        let parser = Arc::new(RwLock::new(vt100::Parser::new_with_callbacks(
             size.rows - 4,
             size.cols - 4,
             0,
+            TerminalResponder::new(),
         )));
         let exited = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = channel::<Bytes>();
 
         {
             let exited_clone = exited.clone();
-            spawn_blocking(move || {
+            std::thread::spawn(move || {
                 let mut child = pty_pair.slave.spawn_command(cmd).unwrap();
                 let _ = child.wait();
                 exited_clone.store(true, Ordering::Relaxed);
@@ -239,6 +240,7 @@ impl PtyPane {
         {
             let mut reader = pty_pair.master.try_clone_reader().unwrap();
             let parser = parser.clone();
+            let response_sender = tx.clone();
             tokio::spawn(async move {
                 let mut processed_buf = Vec::new();
                 let mut buf = [0u8; 8192];
@@ -250,8 +252,14 @@ impl PtyPane {
                     }
                     if size > 0 {
                         processed_buf.extend_from_slice(&buf[..size]);
-                        let mut parser = parser.write().unwrap();
-                        parser.process(&processed_buf);
+                        let responses = {
+                            let mut parser = parser.write().unwrap();
+                            parser.process(&processed_buf);
+                            parser.callbacks_mut().take_responses()
+                        };
+                        if !responses.is_empty() {
+                            let _ = response_sender.send(Bytes::from(responses));
+                        }
 
                         // Clear the processed portion of the buffer
                         processed_buf.clear();
@@ -260,12 +268,10 @@ impl PtyPane {
             });
         }
 
-        let (tx, mut rx) = channel::<Bytes>(32);
-
-        let mut writer = BufWriter::new(pty_pair.master.take_writer().unwrap());
-        // writer is moved into the tokio task below
-        tokio::spawn(async move {
-            while let Some(bytes) = rx.recv().await {
+        let writer = pty_pair.master.take_writer().unwrap();
+        std::thread::spawn(move || {
+            let mut writer = BufWriter::new(writer);
+            while let Ok(bytes) = rx.recv() {
                 writer.write_all(&bytes).unwrap();
                 writer.flush().unwrap();
             }
@@ -300,7 +306,7 @@ impl PtyPane {
     }
 }
 
-async fn handle_pane_key_event(pane: &mut PtyPane, key: &KeyEvent) -> bool {
+fn handle_pane_key_event(pane: &mut PtyPane, key: &KeyEvent) -> bool {
     let input_bytes = match key.code {
         KeyCode::Char(ch) => {
             let mut send = vec![ch as u8];
@@ -357,7 +363,7 @@ async fn handle_pane_key_event(pane: &mut PtyPane, key: &KeyEvent) -> bool {
         _ => return true,
     };
 
-    pane.sender.send(Bytes::from(input_bytes)).await.ok();
+    pane.sender.send(Bytes::from(input_bytes)).ok();
     true
 }
 

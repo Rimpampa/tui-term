@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Terminal
+
+- Add `terminal::TerminalResponder` for answering terminal capability queries
+  from applications running inside a PTY.
+
+### Examples
+
+- Answer terminal queries in the nested shell and multiplexer examples.
+- Send a carriage return (`\r`) for Enter, matching real terminal input and
+  fixing command submission in shells such as fish.
+
 ## [0.3.4] - 2026-04-06
 
 ### Vt100

@@ -8,16 +8,13 @@ use bytes::Bytes;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use ratatui::{
-    DefaultTerminal, Frame,
     layout::Alignment,
     style::{Modifier, Style},
     widgets::{Block, Borders, Paragraph},
+    DefaultTerminal, Frame,
 };
-use tokio::{
-    sync::mpsc::{Sender, channel},
-    task,
-};
-use tui_term::widget::PseudoTerminal;
+use tokio::sync::mpsc::{channel, Sender};
+use tui_term::{terminal::TerminalResponder, widget::PseudoTerminal};
 use vt100::Screen;
 
 #[derive(Debug)]
@@ -54,18 +51,25 @@ async fn run_app(terminal: &mut DefaultTerminal) -> io::Result<()> {
         })
         .unwrap();
     // Wait for the child to complete
-    task::spawn_blocking(move || {
+    std::thread::spawn(move || {
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         let _child_exit_status = child.wait().unwrap();
         drop(pair.slave);
     });
 
     let mut reader = pair.master.try_clone_reader().unwrap();
-    let parser = Arc::new(RwLock::new(vt100::Parser::new(size.rows, size.cols, 0)));
+    let parser = Arc::new(RwLock::new(vt100::Parser::new_with_callbacks(
+        size.rows,
+        size.cols,
+        0,
+        TerminalResponder::new(),
+    )));
+    let (tx, mut rx) = channel::<Bytes>(32);
 
     {
         let parser = parser.clone();
-        task::spawn_blocking(move || {
+        let response_sender = tx.clone();
+        std::thread::spawn(move || {
             // Consume the output from the child
             // Can't read the full buffer, since that would wait for EOF
             let mut buf = [0u8; 8192];
@@ -77,8 +81,14 @@ async fn run_app(terminal: &mut DefaultTerminal) -> io::Result<()> {
                 }
                 if size > 0 {
                     processed_buf.extend_from_slice(&buf[..size]);
-                    let mut parser = parser.write().unwrap();
-                    parser.process(&processed_buf);
+                    let responses = {
+                        let mut parser = parser.write().unwrap();
+                        parser.process(&processed_buf);
+                        parser.callbacks_mut().take_responses()
+                    };
+                    if !responses.is_empty() {
+                        let _ = response_sender.blocking_send(Bytes::from(responses));
+                    }
 
                     // Clear the processed portion of the buffer
                     processed_buf.clear();
@@ -86,8 +96,6 @@ async fn run_app(terminal: &mut DefaultTerminal) -> io::Result<()> {
             }
         });
     }
-
-    let (tx, mut rx) = channel::<Bytes>(32);
 
     let mut writer = BufWriter::new(pair.master.take_writer().unwrap());
 
@@ -107,7 +115,7 @@ async fn run_app(terminal: &mut DefaultTerminal) -> io::Result<()> {
 
 async fn run(
     terminal: &mut DefaultTerminal,
-    parser: Arc<RwLock<vt100::Parser>>,
+    parser: Arc<RwLock<vt100::Parser<TerminalResponder>>>,
     sender: Sender<Bytes>,
 ) -> io::Result<()> {
     loop {
@@ -129,7 +137,8 @@ async fn run(
                             KeyCode::Backspace => {
                                 sender.send(Bytes::from(vec![8])).await.unwrap();
                             }
-                            KeyCode::Enter => sender.send(Bytes::from(vec![b'\n'])).await.unwrap(),
+                            // Terminals send a carriage return for Enter.
+                            KeyCode::Enter => sender.send(Bytes::from(vec![b'\r'])).await.unwrap(),
                             KeyCode::Left => {
                                 sender.send(Bytes::from(vec![27, 91, 68])).await.unwrap()
                             }

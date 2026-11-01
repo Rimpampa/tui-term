@@ -40,6 +40,8 @@
 //! # Features
 //!
 //! - Support for parsing and processing terminal control sequences using the `vt100` crate.
+//! - [`terminal::TerminalResponder`] for answering terminal capability queries from
+//!   applications running inside a PTY.
 //!
 //! # Limitations
 //!
@@ -53,6 +55,8 @@
 extern crate alloc;
 
 mod state;
+#[cfg(feature = "vt100")]
+pub mod terminal;
 #[cfg(feature = "vt100")]
 mod vt100_imp;
 pub mod widget;

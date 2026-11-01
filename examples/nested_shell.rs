@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read, Write},
-    sync::{Arc, RwLock, mpsc::Sender},
+    sync::{mpsc::Sender, Arc, RwLock},
     time::Duration,
 };
 
@@ -8,12 +8,12 @@ use bytes::Bytes;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use ratatui::{
-    DefaultTerminal, Frame,
     layout::Alignment,
     style::{Modifier, Style},
     widgets::{Block, Borders, Paragraph},
+    DefaultTerminal, Frame,
 };
-use tui_term::widget::PseudoTerminal;
+use tui_term::{terminal::TerminalResponder, widget::PseudoTerminal};
 use vt100::Screen;
 
 #[derive(Debug)]
@@ -56,10 +56,17 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     });
 
     let mut reader = pair.master.try_clone_reader().unwrap();
-    let parser = Arc::new(RwLock::new(vt100::Parser::new(size.rows, size.cols, 0)));
+    let parser = Arc::new(RwLock::new(vt100::Parser::new_with_callbacks(
+        size.rows,
+        size.cols,
+        0,
+        TerminalResponder::new(),
+    )));
+    let (tx, rx) = std::sync::mpsc::channel::<Bytes>();
 
     {
         let parser = parser.clone();
+        let response_sender = tx.clone();
         std::thread::spawn(move || {
             // Consume the output from the child
             // Can't read the full buffer, since that would wait for EOF
@@ -72,8 +79,14 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 }
                 if size > 0 {
                     processed_buf.extend_from_slice(&buf[..size]);
-                    let mut parser = parser.write().unwrap();
-                    parser.process(&processed_buf);
+                    let responses = {
+                        let mut parser = parser.write().unwrap();
+                        parser.process(&processed_buf);
+                        parser.callbacks_mut().take_responses()
+                    };
+                    if !responses.is_empty() {
+                        let _ = response_sender.send(Bytes::from(responses));
+                    }
 
                     // Clear the processed portion of the buffer
                     processed_buf.clear();
@@ -81,8 +94,6 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             }
         });
     }
-
-    let (tx, rx) = std::sync::mpsc::channel::<Bytes>();
 
     // Drop writer on purpose
     std::thread::spawn(move || {
@@ -100,7 +111,7 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 
 fn run(
     terminal: &mut DefaultTerminal,
-    parser: Arc<RwLock<vt100::Parser>>,
+    parser: Arc<RwLock<vt100::Parser<TerminalResponder>>>,
     sender: Sender<Bytes>,
 ) -> io::Result<()> {
     loop {
@@ -121,11 +132,9 @@ fn run(
                             KeyCode::Backspace => {
                                 sender.send(Bytes::from(vec![8])).unwrap();
                             }
+                            // Terminals send a carriage return for Enter.
                             KeyCode::Enter => {
-                                #[cfg(unix)]
-                                sender.send(Bytes::from(vec![b'\n'])).unwrap();
-                                #[cfg(windows)]
-                                sender.send(Bytes::from(vec![b'\r', b'\n'])).unwrap();
+                                sender.send(Bytes::from(vec![b'\r'])).unwrap();
                             }
                             KeyCode::Left => sender.send(Bytes::from(vec![27, 91, 68])).unwrap(),
                             KeyCode::Right => sender.send(Bytes::from(vec![27, 91, 67])).unwrap(),
