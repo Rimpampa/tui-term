@@ -40,6 +40,7 @@
 //! # Features
 //!
 //! - Support for parsing and processing terminal control sequences using the `vt100` crate.
+//! - [`stream::PtyStream`] for driving a terminal from an existing PTY reader and writer.
 //!
 //! # Limitations
 //!
@@ -53,6 +54,8 @@
 extern crate alloc;
 
 mod state;
+#[cfg(feature = "vt100")]
+pub mod stream;
 #[cfg(feature = "vt100")]
 mod vt100_imp;
 pub mod widget;

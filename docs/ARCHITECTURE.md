@@ -30,6 +30,8 @@ Consumers can integrate tui-term with their own input handling logic or leverage
 
 The output of the underlying process, such as the executed command or program, needs to be read by the consumer of tui-term. The consumer is responsible for obtaining the output and passing it to the `vt100` crate for processing. This separation allows for flexibility and customization in how the output is consumed and displayed within the terminal UI.
 
+For consumers that want the boilerplate handled for them, `stream::PtyStream` accepts an already-created PTY reader and writer, processes output on a background thread, and exposes the parsed screen. PTY creation and lifecycle management stay with the consumer.
+
 ## Examples
 
 The examples try to showcase different input and output handling strategies.

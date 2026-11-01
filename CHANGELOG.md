@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
+### Input/Output
+
+- Add `stream::PtyStream`, which drives a parsed screen from an existing PTY
+  reader and writer, leaving PTY creation to the consumer.
+
 ## [0.3.4] - 2026-04-06
 
 ### Vt100

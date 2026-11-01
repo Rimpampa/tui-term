@@ -36,6 +36,11 @@ Run it with:
 cargo run --example simple_ls_controller --features unstable
 ```
 
+## `pty_stream`
+
+- Description: Creates the PTY outside of `tui-term`, then hands its reader and writer to `PtyStream`.
+- Also demonstrates keyboard, resize, and bracketed paste.
+
 ## `nested_shell`
 
 - Description: Demonstrates nested shell functionality.

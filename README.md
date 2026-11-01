@@ -34,6 +34,32 @@ cargo run --example simple_ls_rw
 ```
 
 
+## Using an existing PTY
+
+`tui-term` does not require you to use a specific PTY implementation. Create
+the PTY yourself, then pass its reader and writer to
+`tui_term::stream::PtyStream`:
+
+```rust
+use std::io;
+use tui_term::stream::{PtyStream, Size};
+
+fn attach(
+    reader: impl io::Read + Send + 'static,
+    writer: impl io::Write + Send,
+) -> io::Result<()> {
+    let terminal = PtyStream::new(reader, writer, Size::new(24, 80))?;
+    terminal.write_input(b"ls\n")?;
+    let screen = terminal.screen();
+    println!("{}", screen.contents());
+    Ok(())
+}
+```
+
+The reader is processed on a background thread. Resize the PTY yourself and
+call `PtyStream::resize` so the parser stays in sync. See
+[`examples/pty_stream.rs`](examples/pty_stream.rs) for a complete example.
+
 ## Controller
 
 The controller is an `experimental` feature helping with managing the lifecycle of commands that are spawned inside a pseudoterminal.
