@@ -43,6 +43,14 @@ prompt and do not wait for a response. See
 [Terminal compatibility](https://fishshell.com/docs/current/terminal-compatibility.html)
 for the kinds of queries involved.
 
+## Mouse input
+
+`tui_term::mouse` translates host mouse events into the xterm mouse protocol
+expected by the application inside the PTY. Mouse events are forwarded only
+when the inner application enables mouse tracking, so clicks in a plain shell
+do nothing unless the shell or program requests them. See
+[Mouse input](docs/MOUSE.md) for details.
+
 ## Controller
 
 The controller is an `experimental` feature helping with managing the lifecycle of commands that are spawned inside a pseudoterminal.

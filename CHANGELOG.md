@@ -4,8 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [unreleased]
 
-### Terminal
+### Input/Output
 
+- Add `mouse::MouseEvent` and protocol encoding for xterm mouse tracking,
+  including SGR, UTF-8, and legacy encodings.
 - Add `terminal::TerminalResponder` for answering terminal capability queries
   from applications running inside a PTY.
 
@@ -14,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Answer terminal queries in the nested shell and multiplexer examples.
 - Send a carriage return (`\r`) for Enter, matching real terminal input and
   fixing command submission in shells such as fish.
+- Enable mouse capture and forward mouse events in the interactive examples.
 
 ## [0.3.4] - 2026-04-06
 

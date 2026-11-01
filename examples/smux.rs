@@ -11,7 +11,12 @@ use std::{
 };
 
 use bytes::Bytes;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    },
+    execute,
+};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -26,6 +31,8 @@ use tui_term::{
     widget::{Cursor, PseudoTerminal},
 };
 
+mod common;
+
 #[derive(Debug, Clone, Copy)]
 struct Size {
     cols: u16,
@@ -36,7 +43,9 @@ struct Size {
 async fn main() -> io::Result<()> {
     init_panic_hook();
     let mut terminal = ratatui::init();
+    execute!(io::stdout(), EnableMouseCapture)?;
     let result = run_smux(&mut terminal).await;
+    execute!(io::stdout(), DisableMouseCapture)?;
     ratatui::restore();
     result
 }
@@ -150,6 +159,35 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
                     let pane_size = calc_pane_size(size, panes.len());
                     resize_all_panes(&mut panes, pane_size);
                 }
+                Event::Mouse(mouse) => {
+                    for (index, rect) in pane_rects(terminal.size()?, panes.len())
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if mouse.column >= rect.x
+                            && mouse.column < rect.x.saturating_add(rect.width)
+                            && mouse.row >= rect.y
+                            && mouse.row < rect.y.saturating_add(rect.height)
+                        {
+                            let area = Block::default().borders(Borders::ALL).inner(rect);
+                            if let Some(event) = common::mouse_event(mouse, area) {
+                                let bytes = {
+                                    let parser = panes[index].parser.read().unwrap();
+                                    let screen = parser.screen();
+                                    event.encode(
+                                        screen.mouse_protocol_mode(),
+                                        screen.mouse_protocol_encoding(),
+                                    )
+                                };
+                                if let Some(bytes) = bytes {
+                                    panes[index].sender.send(Bytes::from(bytes)).ok();
+                                }
+                                active_pane = Some(index);
+                            }
+                            break;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -192,6 +230,28 @@ fn calc_pane_size(mut size: Size, nr_panes: usize) -> Size {
     size.rows -= 2;
     size.rows /= nr_panes as u16;
     size
+}
+
+fn pane_rects(size: ratatui::layout::Size, pane_count: usize) -> Vec<Rect> {
+    if pane_count == 0 {
+        return Vec::new();
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([Constraint::Percentage(100), Constraint::Min(1)])
+        .split(Rect::new(0, 0, size.width, size.height));
+    let pane_height = (chunks[0].height.saturating_sub(1)) / pane_count as u16;
+
+    (0..pane_count)
+        .map(|index| Rect {
+            x: chunks[0].x,
+            y: chunks[0].y + index as u16 * pane_height,
+            width: chunks[0].width,
+            height: pane_height,
+        })
+        .collect()
 }
 
 fn resize_all_panes(panes: &mut [PtyPane], size: Size) {

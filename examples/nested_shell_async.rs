@@ -5,7 +5,10 @@ use std::{
 };
 
 use bytes::Bytes;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use ratatui::{
     layout::Alignment,
@@ -17,6 +20,8 @@ use tokio::sync::mpsc::{channel, Sender};
 use tui_term::{terminal::TerminalResponder, widget::PseudoTerminal};
 use vt100::Screen;
 
+mod common;
+
 #[derive(Debug)]
 struct Size {
     cols: u16,
@@ -26,7 +31,9 @@ struct Size {
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
+    execute!(io::stdout(), EnableMouseCapture)?;
     let result = run_app(&mut terminal).await;
+    execute!(io::stdout(), DisableMouseCapture)?;
     ratatui::restore();
     result
 }
@@ -176,7 +183,22 @@ async fn run(
                 }
                 Event::FocusGained => {}
                 Event::FocusLost => {}
-                Event::Mouse(_) => {}
+                Event::Mouse(mouse) => {
+                    let area = common::terminal_area(terminal.size()?);
+                    if let Some(event) = common::mouse_event(mouse, area) {
+                        let bytes = {
+                            let parser = parser.read().unwrap();
+                            let screen = parser.screen();
+                            event.encode(
+                                screen.mouse_protocol_mode(),
+                                screen.mouse_protocol_encoding(),
+                            )
+                        };
+                        if let Some(bytes) = bytes {
+                            sender.send(Bytes::from(bytes)).await.ok();
+                        }
+                    }
+                }
                 Event::Paste(_) => todo!(),
                 Event::Resize(cols, rows) => {
                     parser.write().unwrap().screen_mut().set_size(rows, cols);

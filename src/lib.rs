@@ -40,6 +40,8 @@
 //! # Features
 //!
 //! - Support for parsing and processing terminal control sequences using the `vt100` crate.
+//! - [`mouse`] for translating mouse events into the escape sequences expected by terminal
+//!   applications.
 //! - [`terminal::TerminalResponder`] for answering terminal capability queries from
 //!   applications running inside a PTY.
 //!
@@ -54,6 +56,8 @@
 
 extern crate alloc;
 
+#[cfg(feature = "vt100")]
+pub mod mouse;
 mod state;
 #[cfg(feature = "vt100")]
 pub mod terminal;

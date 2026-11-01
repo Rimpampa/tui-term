@@ -26,6 +26,8 @@ The `ratatui` crate does not enforce a specific input handling pattern.
 Consequently, handling input from the user is the responsibility of the consumer of the `tui-term` library.
 Consumers can integrate tui-term with their own input handling logic or leverage existing input libraries to interact with the underlying process and update the UI accordingly.
 
+Mouse events need an additional translation step: the outer terminal reports them to the TUI, and the TUI must encode them in the protocol requested by the application inside the PTY. The `mouse` module performs that encoding. Forward mouse events only when the inner application has enabled mouse reporting. See [Mouse input](MOUSE.md) for the protocol details.
+
 ## Output
 
 The output of the underlying process, such as the executed command or program, needs to be read by the consumer of tui-term. The consumer is responsible for obtaining the output and passing it to the `vt100` crate for processing. This separation allows for flexibility and customization in how the output is consumed and displayed within the terminal UI.
