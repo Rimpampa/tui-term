@@ -37,7 +37,7 @@ cargo run --example simple_ls_rw
 ## Terminal responses
 
 Applications running inside a PTY query the terminal for capabilities such as
-device attributes and cursor position. `terminal::TerminalResponder`
+device attributes, cursor position, and background color. `terminal::TerminalResponder`
 answers those queries. The examples use it so shells like fish show their normal
 prompt and do not wait for a response. See
 [Terminal compatibility](https://fishshell.com/docs/current/terminal-compatibility.html)

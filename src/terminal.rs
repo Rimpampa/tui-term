@@ -1,10 +1,10 @@
 //! Responses to terminal capability queries.
 //!
 //! Terminal applications frequently ask the terminal questions such as "what
-//! kind of terminal are you?" (DA1) or "where is the cursor?" (DSR). A real
-//! terminal writes the answer back to the application. When the application
-//! runs behind a PTY managed by `tui-term`, the TUI is the terminal and has to
-//! provide those answers.
+//! kind of terminal are you?" (DA1), "where is the cursor?" (DSR), or "what is
+//! your background color?" (OSC 11). A real terminal writes the answer back to
+//! the application. When the application runs behind a PTY managed by
+//! `tui-term`, the TUI is the terminal and has to provide those answers.
 //!
 //! [`TerminalResponder`] implements [`vt100::Callbacks`]. Construct the parser
 //! with [`vt100::Parser::new_with_callbacks`] and drain the responses after
@@ -31,13 +31,29 @@ use vt100::{Callbacks, Screen};
 #[derive(Debug, Clone, Default)]
 pub struct TerminalResponder {
     responses: Vec<u8>,
+    background_color: (u8, u8, u8),
 }
 
 impl TerminalResponder {
-    /// Creates a new responder.
+    /// Creates a responder with a black default background color.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the background color reported to applications that query it.
+    ///
+    /// This is used for the OSC 11 response. Applications such as fish use it
+    /// to select a light or dark theme.
+    #[must_use]
+    pub fn with_background_color(mut self, red: u8, green: u8, blue: u8) -> Self {
+        self.set_background_color(red, green, blue);
+        self
+    }
+
+    /// Updates the background color reported to applications that query it.
+    pub fn set_background_color(&mut self, red: u8, green: u8, blue: u8) {
+        self.background_color = (red, green, blue);
     }
 
     /// Returns the responses accumulated since the last drain.
@@ -94,6 +110,19 @@ impl Callbacks for TerminalResponder {
         }
     }
 
+    fn unhandled_osc(&mut self, _screen: &mut Screen, params: &[&[u8]]) {
+        // OSC 11: query background color.
+        if params.len() == 2 && params[0] == b"11" && params[1] == b"?" {
+            self.responses.extend_from_slice(b"\x1b]11;rgb:");
+            push_hex_component(&mut self.responses, self.background_color.0);
+            self.responses.push(b'/');
+            push_hex_component(&mut self.responses, self.background_color.1);
+            self.responses.push(b'/');
+            push_hex_component(&mut self.responses, self.background_color.2);
+            self.responses.extend_from_slice(b"\x1b\\");
+        }
+    }
+
     fn unhandled_dcs(
         &mut self,
         _screen: &mut Screen,
@@ -145,6 +174,14 @@ fn push_hex(out: &mut Vec<u8>, bytes: &[u8]) {
     }
 }
 
+fn push_hex_component(out: &mut Vec<u8>, value: u8) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push(HEX[(value >> 4) as usize]);
+    out.push(HEX[(value & 0x0f) as usize]);
+    out.push(HEX[(value >> 4) as usize]);
+    out.push(HEX[(value & 0x0f) as usize]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,17 +208,33 @@ mod tests {
     }
 
     #[test]
+    fn responds_to_background_color_query() {
+        let mut parser = parser(TerminalResponder::new().with_background_color(0x12, 0x34, 0x56));
+        parser.process(b"\x1b]11;?\x1b\\");
+        assert_eq!(
+            parser.callbacks_mut().take_responses(),
+            b"\x1b]11;rgb:1212/3434/5656\x1b\\"
+        );
+    }
+
+    #[test]
     fn handles_split_queries() {
         let mut parser = parser(TerminalResponder::new());
         parser.process(b"\x1b[0");
         assert!(parser.callbacks_mut().take_responses().is_empty());
         parser.process(b"c");
-        assert_eq!(parser.callbacks_mut().take_responses(), b"\x1b[?62;22c");
+        assert_eq!(
+            parser.callbacks_mut().take_responses(),
+            b"\x1b[?62;22c"
+        );
     }
 
     #[test]
     fn responds_to_xtversion_and_kitty_query() {
-        assert_eq!(process(b"\x1b[>0q"), b"\x1bP>|tui-term\x1b\\");
+        assert_eq!(
+            process(b"\x1b[>0q"),
+            b"\x1bP>|tui-term\x1b\\"
+        );
         assert_eq!(process(b"\x1b[?u"), b"\x1b[?0u");
     }
 
@@ -192,7 +245,10 @@ mod tests {
 
     #[test]
     fn handles_multiple_queries_in_one_chunk() {
-        assert_eq!(process(b"\x1b[0c\x1b[6n"), b"\x1b[?62;22c\x1b[1;1R");
+        assert_eq!(
+            process(b"\x1b[0c\x1b[6n"),
+            b"\x1b[?62;22c\x1b[1;1R"
+        );
     }
 
     #[test]

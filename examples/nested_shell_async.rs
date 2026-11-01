@@ -17,6 +17,8 @@ use tokio::sync::mpsc::{channel, Sender};
 use tui_term::{terminal::TerminalResponder, widget::PseudoTerminal};
 use vt100::Screen;
 
+mod common;
+
 #[derive(Debug)]
 struct Size {
     cols: u16,
@@ -58,11 +60,12 @@ async fn run_app(terminal: &mut DefaultTerminal) -> io::Result<()> {
     });
 
     let mut reader = pair.master.try_clone_reader().unwrap();
+    let mut responder = TerminalResponder::new();
+    if let Some((red, green, blue)) = common::host_background_color() {
+        responder = responder.with_background_color(red, green, blue);
+    }
     let parser = Arc::new(RwLock::new(vt100::Parser::new_with_callbacks(
-        size.rows,
-        size.cols,
-        0,
-        TerminalResponder::new(),
+        size.rows, size.cols, 0, responder,
     )));
     let (tx, mut rx) = channel::<Bytes>(32);
 

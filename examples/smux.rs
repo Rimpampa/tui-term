@@ -26,6 +26,8 @@ use tui_term::{
     widget::{Cursor, PseudoTerminal},
 };
 
+mod common;
+
 #[derive(Debug, Clone, Copy)]
 struct Size {
     cols: u16,
@@ -46,6 +48,8 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
         rows: terminal.size()?.height,
         cols: terminal.size()?.width,
     };
+    let background_color = common::host_background_color();
+
     let cwd = std::env::current_dir().unwrap();
     let mut cmd = CommandBuilder::new_default_prog();
     cmd.cwd(cwd);
@@ -54,7 +58,13 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
     let mut active_pane: Option<usize> = None;
 
     let pane_size = calc_pane_size(size, 1);
-    open_new_pane(&mut panes, &mut active_pane, &cmd, pane_size)?;
+    open_new_pane(
+        &mut panes,
+        &mut active_pane,
+        &cmd,
+        pane_size,
+        background_color,
+    )?;
 
     loop {
         terminal.draw(|f| {
@@ -117,7 +127,13 @@ async fn run_smux(terminal: &mut DefaultTerminal) -> io::Result<()> {
                         let pane_size = calc_pane_size(size, panes.len() + 1);
                         tracing::info!("Opened new pane with size: {size:?}");
                         resize_all_panes(&mut panes, pane_size);
-                        open_new_pane(&mut panes, &mut active_pane, &cmd, pane_size)?;
+                        open_new_pane(
+                            &mut panes,
+                            &mut active_pane,
+                            &cmd,
+                            pane_size,
+                            background_color,
+                        )?;
                     }
                     KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         close_active_pane(&mut panes, &mut active_pane).await?;
@@ -208,7 +224,11 @@ struct PtyPane {
 }
 
 impl PtyPane {
-    fn new(size: Size, cmd: CommandBuilder) -> io::Result<Self> {
+    fn new(
+        size: Size,
+        cmd: CommandBuilder,
+        background_color: Option<(u8, u8, u8)>,
+    ) -> io::Result<Self> {
         let pty_system = native_pty_system();
         let pty_pair = pty_system
             .openpty(PtySize {
@@ -218,11 +238,15 @@ impl PtyPane {
                 pixel_height: 0,
             })
             .unwrap();
+        let mut responder = TerminalResponder::new();
+        if let Some((red, green, blue)) = background_color {
+            responder = responder.with_background_color(red, green, blue);
+        }
         let parser = Arc::new(RwLock::new(vt100::Parser::new_with_callbacks(
             size.rows - 4,
             size.cols - 4,
             0,
-            TerminalResponder::new(),
+            responder,
         )));
         let exited = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel::<Bytes>();
@@ -372,8 +396,9 @@ fn open_new_pane(
     active_pane: &mut Option<usize>,
     cmd: &CommandBuilder,
     size: Size,
+    background_color: Option<(u8, u8, u8)>,
 ) -> io::Result<()> {
-    let new_pane = PtyPane::new(size, cmd.clone())?;
+    let new_pane = PtyPane::new(size, cmd.clone(), background_color)?;
     let new_pane_index = panes.len();
     panes.push(new_pane);
     *active_pane = Some(new_pane_index);
